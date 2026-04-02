@@ -4,12 +4,10 @@ from sklearn.preprocessing import StandardScaler
 
 
 def load_data(file_path):
-    """Load the dataset from a CSV file."""
     return pd.read_csv(file_path)
 
 
 def inspect_data(df):
-    """Print basic dataset information."""
     print("Shape:", df.shape)
 
     print("\nColumns:")
