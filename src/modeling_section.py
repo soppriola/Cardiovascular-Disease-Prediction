@@ -1,6 +1,7 @@
 import json
 import warnings
 from pathlib import Path
+from xgboost import XGBClassifier
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -231,7 +232,40 @@ def tune_logistic_regression(X_train, y_train):
     search.fit(X_train, y_train)
     return search
 
+def tune_xgboost(X_train, y_train):
+    """
+    Tune XGBoost using cross-validated grid search.
+    """
+    base_model = XGBClassifier(
+        use_label_encoder=False,
+        eval_metric="logloss",
+        random_state=RANDOM_STATE,
+        n_jobs=-1,
+    )
 
+    param_grid = {
+        "n_estimators": [100, 200],
+        "max_depth": [3, 4, 5],
+        "learning_rate": [0.01, 0.1],
+        "subsample": [0.7, 0.8],
+        "colsample_bytree": [0.7, 0.8],
+        "gamma": [0, 1],
+        "reg_alpha": [0, 0.5, 1],
+        "reg_lambda": [1, 2, 5],
+    }
+
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
+
+    search = GridSearchCV(
+        estimator=base_model,
+        param_grid=param_grid,
+        scoring="f1",
+        cv=cv,
+        n_jobs=-1,  
+        refit=True,
+    )
+    search.fit(X_train, y_train)
+    return search
 
 def tune_random_forest(X_train, y_train):
     """
@@ -261,9 +295,9 @@ def tune_random_forest(X_train, y_train):
     return search
 
 
-def feature_importance_report(model, feature_names):
+def feature_importance_report(model, feature_names, model_name="random_forest"):
     """
-    Save Random Forest feature importances.
+    Save feature importances for tree-based models.
     """
     importances = pd.DataFrame(
         {
@@ -272,15 +306,15 @@ def feature_importance_report(model, feature_names):
         }
     ).sort_values("importance", ascending=False)
 
-    importances.to_csv(RESULTS_DIR / "random_forest_feature_importance.csv", index=False)
+    importances.to_csv(RESULTS_DIR / f"{model_name}_feature_importance.csv", index=False)
 
     top_n = importances.head(10)
     plt.figure(figsize=(8, 5))
     plt.barh(top_n["feature"][::-1], top_n["importance"][::-1])
     plt.xlabel("Importance")
-    plt.title("Top 10 Random Forest Feature Importances")
+    plt.title(f"Top 10 {model_name.replace('_', ' ').title()} Feature Importances")
     plt.tight_layout()
-    plt.savefig(RESULTS_DIR / "random_forest_feature_importance.png", dpi=200, bbox_inches="tight")
+    plt.savefig(RESULTS_DIR / f"{model_name}_feature_importance.png", dpi=200, bbox_inches="tight")
     plt.close()
 
     return importances
@@ -311,10 +345,15 @@ def main():
     rf_search = tune_random_forest(X_train, y_train)
     best_rf_model = rf_search.best_estimator_
 
+    print("Tuning XGBoost...")
+    xgb_search = tune_xgboost(X_train, y_train)
+    best_xgb_model = xgb_search.best_estimator_
+
     # Save best hyperparameters.
     best_params = {
         "logistic_regression": log_search.best_params_,
         "random_forest": rf_search.best_params_,
+        "xgboost": xgb_search.best_params_,
     }
     with open(RESULTS_DIR / "best_hyperparameters.json", "w") as f:
         json.dump(best_params, f, indent=2)
@@ -326,6 +365,7 @@ def main():
     for model_name, model in [
         ("logistic_regression", best_log_model),
         ("random_forest", best_rf_model),
+        ("xgboost", best_xgb_model),
     ]:
         for split_name, X_split, y_split in [
             ("train", X_train, y_train),
@@ -381,14 +421,25 @@ def main():
         X_val,
         y_val,
     )
+    compare_training_behavior(
+        "xgboost",
+        best_xgb_model,
+        X_train,
+        y_train,
+        X_val,
+        y_val,
+    )
 
-    # Random Forest feature importance.
+    # Feature importance for tree-based models.
     print("Saving feature importance for Random Forest...")
-    feature_importance_report(best_rf_model, X_train.columns)
+    feature_importance_report(best_rf_model, X_train.columns, model_name="random_forest")
+    print("Saving feature importance for XGBoost...")
+    feature_importance_report(best_xgb_model, X_train.columns, model_name="xgboost")
 
     print("\nDone. Files were saved to the modeling_results folder.")
     print("Best Logistic Regression parameters:", log_search.best_params_)
     print("Best Random Forest parameters:", rf_search.best_params_)
+    print("Best XGBoost parameters:", xgb_search.best_params_)
     print("\nModel performance summary:")
     print(results_df)
 
